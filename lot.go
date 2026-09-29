@@ -1,5 +1,4 @@
 // Package auction 是拍卖场：出价、最小加价、延时与押金。
-// 缺陷：最小加价用 >=（等于最低加价也接受）、最后 10 秒出价不延时、落槌后退押金没实现。
 package auction
 
 import "errors"
@@ -33,7 +32,8 @@ func (l *Lot) Deposit(bidder string, amount float64) error {
 	return nil
 }
 
-// Bid 出价。缺陷：刚好等于「当前价 + 最小加价」也接受，也不做最后 10 秒延时。
+// Bid 出价。新出价必须严格大于「当前价 + 最小加价」；
+// 出价发生在 EndsAt-10 秒之后时，结束时间顺延 10 秒。
 func (l *Lot) Bid(bidder string, amount float64, now int64) (bool, error) {
 	if amount <= 0 || bidder == "" {
 		return false, ErrInput
@@ -41,16 +41,26 @@ func (l *Lot) Bid(bidder string, amount float64, now int64) (bool, error) {
 	if now > l.EndsAt {
 		return false, nil
 	}
-	if amount >= l.Price+l.MinStep {
+	if amount > l.Price+l.MinStep {
 		l.Price = amount
 		l.Bidder = bidder
+		if now > l.EndsAt-10 {
+			l.EndsAt += 10
+		}
 		return true, nil
 	}
 	return false, nil
 }
 
-// Settle 落槌。缺陷：直接返回赢家与成交价，输家的押金不退。
+// Settle 落槌。退回除赢家外的所有押金，返回赢家、成交价与退回人数。
 func (l *Lot) Settle(now int64) (string, float64, int) {
 	refunded := 0
+	for bidder := range l.Deposits {
+		if bidder == l.Bidder {
+			continue
+		}
+		delete(l.Deposits, bidder)
+		refunded++
+	}
 	return l.Bidder, l.Price, refunded
 }
